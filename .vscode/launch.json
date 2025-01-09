@@ -1,0 +1,16 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "(Linux) Debug DLR_subs",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/DLR_subs",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "console": "externalTerminal"
+        }
+    ]
+}

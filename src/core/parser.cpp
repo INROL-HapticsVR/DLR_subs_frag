@@ -75,61 +75,63 @@ void Parser::consume() {
 
 void Parser::parsing(std::string payload) {
 #ifdef USE_RENDERING
-    //RGB-D 카메라
+    //RGB 카메라
     if (topic_type == TopicType::RGB) {
         // 데이터를 바이너리에서 구조체로 변환
         std::memcpy(&global_index, &payload[0], sizeof(uint32_t));
-        std::memcpy(&fragment_index, &payload[1], sizeof(uint32_t));
+        std::memcpy(&fragment_index, &payload[4], sizeof(uint32_t));
 
         // 하림씨가 RGBRGB로 준다도르
         int part_num = WIDTH * HEIGHT / FRAGMENT_NUM;
         for (int i = 0; i < part_num; i++) {
-            rgb.r[i + part_num * fragment_index] = static_cast<uint8_t>(payload[16 + 3 * i + 0]);
-            rgb.g[i + part_num * fragment_index] = static_cast<uint8_t>(payload[16 + 3 * i + 1]);
-            rgb.b[i + part_num * fragment_index] = static_cast<uint8_t>(payload[16 + 3 * i + 2]);
+            rgb.r[i + part_num * fragment_index] = static_cast<uint8_t>(payload[8 + 3 * i + 0]);
+            rgb.g[i + part_num * fragment_index] = static_cast<uint8_t>(payload[8 + 3 * i + 1]);
+            rgb.b[i + part_num * fragment_index] = static_cast<uint8_t>(payload[8 + 3 * i + 2]);
         }
 
         fragmentChecker();
 
-        if (fragment_index == FRAGMENT_NUM){
-            if (fragmentChecker()){
+        if (fragment_index == FRAGMENT_NUM - 1){
+            if (fragmentChecker() && !write_locker){
                 displayRGBImage();
             }
             else {
-                std::cout << "fragments are not fullfilled" << std::endl;
+                // std::cout << "fragments are not fullfilled" << std::endl;
             }
         }
     } 
-        //DEPTH 카메라
+
+    //DEPTH 카메라
     else if (topic_type == TopicType::DEPTH) {
         std::memcpy(&global_index, &payload[0], sizeof(uint32_t));
-        std::memcpy(&fragment_index, &payload[1], sizeof(uint32_t));
+        std::memcpy(&fragment_index, &payload[4], sizeof(uint32_t));
 
         // 하림씨가 DEPTH를 Float로 준다도르
         int part_num = WIDTH * HEIGHT / FRAGMENT_NUM;
         for (int i = 0; i < part_num; i++) {
-            std::memcpy(&depth.d[i + part_num], &payload[16 + 4 * i], sizeof(float));
+            std::memcpy(&depth.d[i + part_num* fragment_index], &payload[8 + 4 * i], sizeof(float));
         }
 
         fragmentChecker();
 
-        if (fragment_index == FRAGMENT_NUM){
-            if (fragmentChecker()){
+        if (fragment_index == FRAGMENT_NUM - 1){
+            if (fragmentChecker() && !write_locker){
                 displayDepthImage();
             }
             else {
-                std::cout << "fragments are not fullfilled" << std::endl;
+                // std::cout << "fragments are not fullfilled" << std::endl;
             }
         }
     }
 
+    // POSE
     else if (topic_type == TopicType::POSE){
         std::memcpy(&global_index, &payload[0], sizeof(uint32_t));
         for (int i = 0; i < 3; i++) {
-            std::memcpy(&pose.pos[i], &payload[8 + i], sizeof(float));
+            std::memcpy(&pose.pos[i], &payload[4 + 4 * i], sizeof(float));
         }
         for (int i = 0; i < 4; i++) {
-            std::memcpy(&pose.rot[i], &payload[8 + 3 + i], sizeof(float));
+            std::memcpy(&pose.rot[i], &payload[4 + 12 + 4 * i], sizeof(float));
         }
     }
     
@@ -137,33 +139,66 @@ void Parser::parsing(std::string payload) {
     if (!shm_ptr) {
         throw std::runtime_error("Shared memory pointer is null.");
     }
-
-    std::memcpy(&time, &payload[0], sizeof(int64_t));
-
+    //RGB 카메라
     if (topic_type == TopicType::RGB) {
-        for (int i = 0; i < WIDTH * HEIGHT; ++i) {
-            shm_ptr[3 * i + 0] = payload[8 + 3 * i + 0]; // R
-            shm_ptr[3 * i + 1] = payload[8 + 3 * i + 1]; // G
-            shm_ptr[3 * i + 2] = payload[8 + 3 * i + 2]; // B
+        std::memcpy(&global_index, &payload[0], sizeof(uint32_t));
+        std::memcpy(&fragment_index, &payload[4], sizeof(uint32_t));
+
+        // 하림씨가 RGBRGB로 준다도르
+        int part_num = WIDTH * HEIGHT / FRAGMENT_NUM;
+        for (int i = 0; i < part_num; i++) {
+            payload_tmp[3 * i + 0 + part_num * fragment_index] = payload[8 + 3 * i + 0]; // R
+            payload_tmp[3 * i + 1 + part_num * fragment_index] = payload[8 + 3 * i + 1]; // G
+            payload_tmp[3 * i + 2 + part_num * fragment_index] = payload[8 + 3 * i + 2]; // B
         }
-        if (msync(shm_ptr, shm_size, MS_SYNC) == -1) {
-            throw std::runtime_error("Failed to sync shared memory.");
+
+        fragmentChecker();
+
+        if (fragment_index == FRAGMENT_NUM - 1){
+            if (fragmentChecker() && !write_locker){
+                for (int i = 0; i < 3 * WIDTH * HEIGHT; i++){
+                    shm_ptr[i] = payload_tmp[i];
+                }
+            }
+            else {
+                // std::cout << "fragments are not fullfilled" << std::endl;
+            }
         }
     }
+
+    //DEPTH 카메라
     else if (topic_type == TopicType::DEPTH){
-        for (int i = 0; i < 4 * WIDTH * HEIGHT; i++) {
-            shm_ptr[i] = payload[8 + i]; //d
+        std::memcpy(&global_index, &payload[0], sizeof(uint32_t));
+        std::memcpy(&fragment_index, &payload[4], sizeof(uint32_t));
+
+        // 하림씨가 DEPTH를 Float로 준다도르
+        int part_num = WIDTH * HEIGHT / FRAGMENT_NUM;
+        for (int i = 0; i < part_num; i++) {
+            payload_tmp[4 * i + 0 + part_num * fragment_index] = payload[8 + 4 * i + 0];
+            payload_tmp[4 * i + 1 + part_num * fragment_index] = payload[8 + 4 * i + 1];
+            payload_tmp[4 * i + 2 + part_num * fragment_index] = payload[8 + 4 * i + 2];
+            payload_tmp[4 * i + 3 + part_num * fragment_index] = payload[8 + 4 * i + 3];
         }
-        if (msync(shm_ptr, shm_size, MS_SYNC) == -1) {
-            throw std::runtime_error("Failed to sync shared memory.");
+
+        fragmentChecker();
+
+        if (fragment_index == FRAGMENT_NUM - 1){
+            if (fragmentChecker() && !write_locker){
+                for (int i = 0; i < 4 * WIDTH * HEIGHT; i++){
+                    shm_ptr[i] = payload_tmp[i];
+                }
+            }
+            else {
+                // std::cout << "fragments are not fullfilled" << std::endl;
+            }
         }
     }
+
+    // POSE
     else if (topic_type == TopicType::POSE){
-        for (int i = 0; i < 3; i++) {
-            std::memcpy(&pose.pos[i], &payload[8 + i], sizeof(float));
-        }
-        for (int i = 0; i < 4; i++) {
-            std::memcpy(&pose.rot[i], &payload[8 + 3 + i], sizeof(float));
+        std::memcpy(&global_index, &payload[0], sizeof(uint32_t));
+        for (int i = 0; i < (3+4)*4; i++) {
+            shm_ptr[i] = payload_tmp[i];
         }
     }
 
@@ -173,6 +208,7 @@ void Parser::parsing(std::string payload) {
 bool Parser::fragmentChecker() {
     if (fragment_index == 0){
         for (int i=0; i<FRAGMENT_NUM; i++){
+            write_locker = false;
             fragment_checker[i] = false;
         }
         fragment_checker[0] = true;
@@ -184,6 +220,11 @@ bool Parser::fragmentChecker() {
     for (int i=0; i<FRAGMENT_NUM; i++){
         true_checker = fragment_checker[i] && true_checker;
     }
+
+    // for (int i = 0; i < FRAGMENT_NUM; i++){
+    //     std::cout << i << "th: " << fragment_checker[i] << " ";
+    // }
+    // std::cout << std::endl;
     return true_checker;
 }
 
@@ -193,9 +234,12 @@ void Parser::displayRGBImage() {
     for (int i = 0; i < HEIGHT; ++i) {
         for (int j = 0; j < WIDTH; ++j) {
             int idx = i * WIDTH + j;
-            image.at<cv::Vec3b>(i, j) = cv::Vec3b(rgb.r[idx], rgb.g[idx], rgb.b[idx]);
+            image.at<cv::Vec3b>(i, j) = cv::Vec3b(rgb.b[idx], rgb.g[idx], rgb.r[idx]);
         }
     }
+
+    write_locker = true;
+    std::cout << "ddddddddddddd" << std::endl;
 
     cv::imshow("RGB Image " + topic_idx, image);
     cv::waitKey(1); // 1ms 대기 (실시간 처리)
@@ -217,6 +261,8 @@ void Parser::displayDepthImage() {
     cv::Mat depthImageNormalized;
     cv::normalize(depthImage, depthImageNormalized, 0, 255, cv::NORM_MINMAX);
     depthImageNormalized.convertTo(depthImageNormalized, CV_8UC1);
+
+    write_locker = true;
 
     // Depth 이미지 표시
     cv::imshow("Depth Image", depthImageNormalized);

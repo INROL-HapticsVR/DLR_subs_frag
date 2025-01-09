@@ -10,7 +10,7 @@
 #include <array>
 
 // # define BUFFER_NUM 2
-# define USE_RENDERING
+// # define USE_RENDERING
 # define WIDTH 1280
 # define HEIGHT 720
 # define FRAGMENT_NUM 20
@@ -64,6 +64,7 @@ public:
     TopicType topic_type;
     std::string topic_idx;
     std::string payload;
+    std::string payload_tmp;
 
     // shared memory
     std::string shm_name;
@@ -79,6 +80,8 @@ public:
     topic_d_t depth;
     topic_pose_t pose;
     std::array<bool, 20> fragment_checker; 
+
+    bool write_locker;
 
 private:
     std::string latestPayload;            // 가장 최근의 메시지

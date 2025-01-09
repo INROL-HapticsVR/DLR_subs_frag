@@ -6,10 +6,11 @@
 
 int main() {
     // MQTT 브로커 정보 및 토픽 정의
-    std::string broker_address = "192.168.0.12";
+    std::string broker_address = "147.46.149.20";
     int port = 1883;
-    // std::vector<std::string> topics = {"topic/camera0"};
+    // std::vector<std::string> topics = {"topic/image0"};
     std::vector<std::string> topics = {"topic/image0", "topic/depth0", "topic/pose0"};
+    // std::vector<std::string> topics = {"topic/image0", "topic/depth0"};
     std::vector<std::unique_ptr<Parser>> queueConsumers;
     std::vector<std::unique_ptr<MQTTSubscriber>> subscribers;
 

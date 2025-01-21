@@ -38,6 +38,7 @@ include_directories(${OpenCV_INCLUDE_DIRS})
 
 # 소스 파일 추가
 set(SOURCES
+    # src/core/consumer.cpp
     src/core/parser.cpp
     src/core/subs.cpp
     src/main.cpp

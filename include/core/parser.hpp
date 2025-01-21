@@ -8,21 +8,25 @@
 #include <iostream>
 #include <cstdint>
 #include <array>
+#include <vector>
+#include <mutex>
 
-// # define BUFFER_NUM 2
+
 // # define USE_RENDERING
 # define WIDTH 1280
 # define HEIGHT 720
 # define FRAGMENT_NUM 20
+# define BUFFER_NUM 10
 
-// struct image_shared {
-//     // int width = WIDTH;
-//     // int height = HEIGHT;
-//     std::array<uint8_t, WIDTH * HEIGHT> r;   // RGB 데이터
-//     std::array<uint8_t, WIDTH * HEIGHT> g;
-//     std::array<uint8_t, WIDTH * HEIGHT> b;
-//     std::array<float, WIDTH * HEIGHT> d;    // Depth 데이터
-// };
+
+// // 전역 동기화 객체
+// extern std::vector<uint32_t> global_check;
+// extern std::mutex global_check_mutex;
+// extern std::vector<std::vector<uint32_t>> buffer_global_index;
+// extern std::mutex global_index_mutex;
+
+extern std::array<std::array<uint32_t, BUFFER_NUM + 3>, 3> buffer_global_index;
+extern std::mutex global_index_mutex;
 
 struct topic_rgb_t {
     int width = WIDTH;
@@ -55,16 +59,25 @@ public:
     void push(const std::string& payload);
     std::string pop();
 
-    void consume();
+    void stack();
     void parsing(std::string payload);
     void displayRGBImage();
     void displayDepthImage();
     bool fragmentChecker();
 
+    void bufferSaver();
+    void indexSaver();
+    void indexChecker();
+    bool writeChecker();
+    void shmWrite();
+    void bufferManager();
+    
+
     TopicType topic_type;
     std::string topic_idx;
-    std::string payload;
-    std::string payload_tmp;
+
+    std::array<uint8_t, 4*WIDTH * HEIGHT> payload;
+    std::array<uint8_t, 4*WIDTH * HEIGHT> payload_tmp;
 
     // shared memory
     std::string shm_name;
@@ -72,18 +85,19 @@ public:
     size_t shm_size;
     uint8_t* shm_ptr;
 
-    int activeBuffer;               // 활성 버퍼 인덱스 (0 또는 1)
+    // buffer
+    uint8_t** buffer_ptr;
+    int buffer_last_idx;
+
     uint32_t global_index;
     uint32_t fragment_index;
-    // uint32_t fragment_index_prev;
+
     topic_rgb_t rgb;
     topic_d_t depth;
     topic_pose_t pose;
     std::array<bool, 20> fragment_checker; 
-
     bool write_locker;
 
-private:
     std::string latestPayload;            // 가장 최근의 메시지
     std::mutex dataMutex;                 // 데이터 보호를 위한 mutex
     std::condition_variable dataCondition;

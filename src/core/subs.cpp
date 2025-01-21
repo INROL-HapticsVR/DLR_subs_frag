@@ -66,9 +66,11 @@ void MQTTSubscriber::onMessage(const struct mosquitto_message* message) {
         queueConsumer.push(std::string(static_cast<char*>(message->payload), message->payloadlen)); 
     }
     
-    // 현재 시간 기록 (디버깅용)
-    tak = std::chrono::steady_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(tak - tik);
-    std::cout << "[Debug] Time: " << topic_ << ": " << duration.count() << " ms" << std::endl;
-    tik = tak;
+    // // 현재 시간 기록 (디버깅용)
+    // if (topic_ == "topic/pose0"){
+    //     tak = std::chrono::steady_clock::now();
+    //     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(tak - tik);
+    //     std::cout << "[Debug] Time: " << topic_ << ": " << duration.count() << " ms" << std::endl;
+    //     tik = tak;
+    // }
 }

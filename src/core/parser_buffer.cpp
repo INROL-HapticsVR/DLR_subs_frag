@@ -39,6 +39,7 @@ Parser::Parser(int topic, TopicType topic_type_) : shm_fd(-1), shm_ptr(nullptr),
     }
 
     buffer_last_idx = 0;
+    buffer_write_idx = 0;
 }
 
 Parser::~Parser() {
@@ -64,6 +65,19 @@ void Parser::push(const std::string& payload) {
     dataCondition.notify_one(); // 소비 스레드에 알림
 }
 
+// std::string Parser::pop() {
+//     std::unique_lock<std::mutex> lock(dataMutex);
+//     dataCondition.wait(lock, [&]() { return !latestPayload.empty(); }); // 데이터가 비어있으면 대기
+//     return latestPayload; // 가장 최근 데이터 반환
+// }
+
+// void Parser::consume() {
+//     while (true) {
+//         auto message = pop(); // 가장 최근 메시지 가져오기
+//         parsing(message);
+//     }
+// }
+
 std::string Parser::pop() {
     std::unique_lock<std::mutex> lock(dataMutex);
     // 데이터가 비어있으면 대기
@@ -73,7 +87,7 @@ std::string Parser::pop() {
     return payload; 
 }
 
-void Parser::stack() {
+void Parser::consume() {
     while (true) {
         auto message = pop(); // 가장 최근 메시지 가져오기
         parsing(message); // 메시지 처리
@@ -155,19 +169,26 @@ void Parser::parsing(std::string payload) {
         }
 
         fragmentChecker();
-
-        if ((fragment_index == FRAGMENT_NUM - 1) && fragmentChecker() && !write_locker){
-            bufferSaver();
-            indexSaver();
-
-            if (writeChecker()){
-                shmWrite();
+        if (fragment_index == FRAGMENT_NUM - 1){
+            if (fragmentChecker() && !write_locker){
+                // Global index
+                for (int i = 0; i< 4; i++){
+                    buffer_ptr[buffer_last_idx][i] = payload[i];
+                }
+                // Data
+                for (int i = 0; i < 3 * WIDTH * HEIGHT; i++){
+                    buffer_ptr[buffer_last_idx][4+i] = payload_tmp[i];
+                }
+                write_locker = true;
+                indexChecker();
+                if (buffer_global_index[static_cast<uint32_t>(TopicType::RGB)][BUFFER_NUM+2] == buffer_global_index[static_cast<uint32_t>(TopicType::RGB)][BUFFER_NUM+1]){
+                    buffer_last_idx++;
+                    bufferManager();
+                }
+                else {
+                    shmWrite();
+                }
             }
-            else {
-                buffer_last_idx++;
-                bufferManager();
-            }
-            write_locker = true;
         }
     }
 
@@ -183,35 +204,48 @@ void Parser::parsing(std::string payload) {
         }
 
         fragmentChecker();
-
-        if ((fragment_index == FRAGMENT_NUM - 1) && fragmentChecker() && !write_locker){
-            bufferSaver();
-            indexSaver();
-
-            if (writeChecker()){
-                shmWrite();
+        if (fragment_index == FRAGMENT_NUM - 1){
+            if (fragmentChecker() && !write_locker){
+                // Global index
+                for (int i = 0; i< 4; i++){
+                    buffer_ptr[buffer_last_idx][i] = payload[i];
+                }
+                // Data
+                for (int i = 0; i < 4 * WIDTH * HEIGHT; i++){
+                    buffer_ptr[buffer_last_idx][4+i] = payload_tmp[i];
+                }
+                write_locker = true;
+                indexChecker();
+                if (buffer_global_index[static_cast<uint32_t>(TopicType::DEPTH)][BUFFER_NUM+2] == buffer_global_index[static_cast<uint32_t>(TopicType::DEPTH)][BUFFER_NUM+1]){
+                    buffer_last_idx++;
+                    bufferManager();
+                }
+                else {
+                    shmWrite();
+                }
             }
-            else {
-                buffer_last_idx++;
-                bufferManager();
-            }
-            write_locker = true;
         }
     }
 
     // POSE
     else if (topic_type == TopicType::POSE){
+        // std::cout << "ddddd" << std::endl;
         std::memcpy(&global_index, &payload[0], sizeof(uint32_t));
-        bufferSaver();
-        indexSaver();
-
-        indexChecker();
-        if (writeChecker()){
-            shmWrite();
+        // Global index
+        for (int i = 0; i< 4; i++){
+            buffer_ptr[buffer_last_idx][i] = payload[i];
         }
-        else {
+        // Data
+        for (int i = 0; i < (3+4)*4; i++){
+            buffer_ptr[buffer_last_idx][4+i] = payload[4+i];
+        }
+        indexChecker();
+        if (buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][BUFFER_NUM+2] == buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][BUFFER_NUM+1]){
             buffer_last_idx++;
             bufferManager();
+        }
+        else {
+            shmWrite();
         }
     }
 
@@ -238,73 +272,14 @@ bool Parser::fragmentChecker() {
     return true_checker;
 }
 
-void Parser::bufferSaver() {
-    if (topic_type == TopicType::RGB){
-        // Global index
-        for (int i = 0; i< 4; i++){
-            buffer_ptr[buffer_last_idx][i] = payload[i];
-        }
-        // Data
-        for (int i = 0; i < 3 * WIDTH * HEIGHT; i++){
-            buffer_ptr[buffer_last_idx][4+i] = payload_tmp[i];
-        }
-    }
-    else if (topic_type == TopicType::DEPTH){
-        // Global index
-        for (int i = 0; i< 4; i++){
-            buffer_ptr[buffer_last_idx][i] = payload[i];
-        }
-        // Data
-        for (int i = 0; i < 4 * WIDTH * HEIGHT; i++){
-            buffer_ptr[buffer_last_idx][4+i] = payload_tmp[i];
-        }
-    }
-    else if (topic_type == TopicType::POSE){
-        // Global index
-        for (int i = 0; i< 4; i++){
-            buffer_ptr[buffer_last_idx][i] = payload[i];
-        }
-        // Data
-        for (int i = 0; i < (3+4)*4; i++){
-            buffer_ptr[buffer_last_idx][4+i] = payload[4+i];
-        }
-    }
-}
+bool Parser::globalChecker() {
+    std::lock_guard<std::mutex> lock(global_check_mutex);
+    global_check[static_cast<uint32_t>(topic_type)]= global_index;
 
-void Parser::indexSaver() {
-    std::lock_guard<std::mutex> lock(global_index_mutex);
-    buffer_global_index[static_cast<uint32_t>(topic_type)][buffer_last_idx] = global_index;
-}
+    // std::cout << "global: " << global_check[0] << " " << global_check[1] << " " << global_check[2] << std::endl;
 
-void Parser::indexChecker() {
-    std::lock_guard<std::mutex> lock(global_index_mutex);
-    if (buffer_global_index[static_cast<uint32_t>(TopicType::RGB)][BUFFER_NUM] == buffer_global_index[static_cast<uint32_t>(TopicType::DEPTH)][BUFFER_NUM] == buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][BUFFER_NUM] == 0){
-        for (int i = buffer_last_idx ; i >= 0; i--) {
-            for (int j = BUFFER_NUM-1; j >= 0; j--) {
-                for (int k = BUFFER_NUM-1; k >= 0; k--) {
-                    if (buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][i] == buffer_global_index[static_cast<uint32_t>(TopicType::RGB)][j]
-                    && buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][i] == buffer_global_index[static_cast<uint32_t>(TopicType::DEPTH)][k]
-                    && buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][i] != 0){
-                        buffer_global_index[static_cast<uint32_t>(TopicType::RGB)][BUFFER_NUM] = 1;
-                        buffer_global_index[static_cast<uint32_t>(TopicType::DEPTH)][BUFFER_NUM] = 1;
-                        buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][BUFFER_NUM] = 1;
-                        buffer_global_index[static_cast<uint32_t>(TopicType::RGB)][BUFFER_NUM+1] = buffer_global_index[static_cast<uint32_t>(TopicType::RGB)][j];
-                        buffer_global_index[static_cast<uint32_t>(TopicType::DEPTH)][BUFFER_NUM+1] = buffer_global_index[static_cast<uint32_t>(TopicType::DEPTH)][k];
-                        buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][BUFFER_NUM+1] = buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][i];
-                        buffer_global_index[static_cast<uint32_t>(TopicType::RGB)][BUFFER_NUM+2] = j;
-                        buffer_global_index[static_cast<uint32_t>(TopicType::DEPTH)][BUFFER_NUM+2] = k;
-                        buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][BUFFER_NUM+2] = i;
-                    }
-                }
-            }
-        }
-    }
-}
-
-
-bool Parser::writeChecker() {
-    std::lock_guard<std::mutex> lock(global_index_mutex);
-    if (buffer_global_index[static_cast<uint32_t>(topic_type)][BUFFER_NUM] == 1) {
+    if ((global_check[static_cast<uint32_t>(TopicType::RGB)] == global_check[static_cast<uint32_t>(TopicType::DEPTH)])
+        &&(global_check[static_cast<uint32_t>(TopicType::DEPTH)] == global_check[static_cast<uint32_t>(TopicType::POSE)])) {
         return true;
     }
     else {
@@ -312,94 +287,76 @@ bool Parser::writeChecker() {
     }
 }
 
-
-void Parser::shmWrite(){
+int Parser::indexChecker() {
     std::lock_guard<std::mutex> lock(global_index_mutex);
-    shm_ptr[0] = 0;
-    if (topic_type == TopicType::RGB) {
-        // std::cout << "rgb write" << buffer_global_index[static_cast<uint32_t>(topic_type)][BUFFER_NUM+1] << std::endl;
-        
-        // Global index
-        for (int i = 0; i< 4; i++){
-            shm_ptr[1+i] = buffer_ptr[buffer_global_index[static_cast<uint32_t>(topic_type)][BUFFER_NUM+2]][i];
-        }
-        // Data
-        for (int i = 0; i < 3 * WIDTH * HEIGHT; i++){
-            shm_ptr[1+4+i] = buffer_ptr[buffer_global_index[static_cast<uint32_t>(topic_type)][BUFFER_NUM+2]][4+i];
-        }
-        shm_ptr[0] = 1;
+    buffer_global_index[static_cast<uint32_t>(topic_type)][buffer_last_idx] = global_index;
 
-        // 버퍼 앞으로 밀기
-        for (int i = buffer_global_index[static_cast<uint32_t>(topic_type)][BUFFER_NUM+2] + 1; i <= buffer_last_idx; i++){
-            int iii = i-(buffer_global_index[static_cast<uint32_t>(topic_type)][BUFFER_NUM+2]+1);
-            for (int j = 0; j < 4 + 3 * WIDTH * HEIGHT; j++){
-                buffer_ptr[iii][j] = buffer_ptr[i][j];
+    buffer_write_idx = -1;
+    if (topic_type == TopicType::RGB){
+        for (int i = buffer_last_idx ; i >= 0; i--) {
+            for (int j = BUFFER_NUM; j >= 0; j--) {
+                for (int k = BUFFER_NUM; k >= 0; k--) {
+                    if (buffer_global_index[static_cast<uint32_t>(TopicType::RGB)][i] == buffer_global_index[static_cast<uint32_t>(TopicType::DEPTH)][j]
+                    && buffer_global_index[static_cast<uint32_t>(TopicType::RGB)][i] == buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][k]
+                    && buffer_global_index[static_cast<uint32_t>(TopicType::RGB)][i] != 0){
+                        buffer_write_idx = i;
+                        buffer_global_index[static_cast<uint32_t>(TopicType::RGB)][BUFFER_NUM] = i;
+                        buffer_global_index[static_cast<uint32_t>(TopicType::DEPTH)][BUFFER_NUM] = j;
+                        buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][BUFFER_NUM] = k;
+                        buffer_global_index[static_cast<uint32_t>(TopicType::RGB)][BUFFER_NUM+1] = buffer_global_index[static_cast<uint32_t>(TopicType::RGB)][i];
+                        buffer_global_index[static_cast<uint32_t>(TopicType::DEPTH)][BUFFER_NUM+1] = buffer_global_index[static_cast<uint32_t>(TopicType::DEPTH)][j];
+                        buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][BUFFER_NUM+1] = buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][k];
+                    }
+                }
             }
-            // std::lock_guard<std::mutex> lock(global_index_mutex);
-            buffer_global_index[static_cast<uint32_t>(topic_type)][iii] = buffer_global_index[static_cast<uint32_t>(topic_type)][i];
         }
-        buffer_global_index[static_cast<uint32_t>(topic_type)][BUFFER_NUM] = 0;
-        buffer_last_idx = buffer_last_idx - buffer_global_index[static_cast<uint32_t>(topic_type)][BUFFER_NUM+2];
-    }
-
-    else if (topic_type == TopicType::DEPTH) {
-        // std::cout << "depth write" << buffer_global_index[static_cast<uint32_t>(TopicType::DEPTH)][BUFFER_NUM+1] << std::endl;
-        
-        // Global index
-        for (int i = 0; i< 4; i++){
-            shm_ptr[1+i] = buffer_ptr[buffer_global_index[static_cast<uint32_t>(topic_type)][BUFFER_NUM+2]][i];
-        }
-        // Data
-        for (int i = 0; i < 4 * WIDTH * HEIGHT; i++){
-            shm_ptr[1+4+i] = buffer_ptr[buffer_global_index[static_cast<uint32_t>(topic_type)][BUFFER_NUM+2]][4+i];
-        }
-        shm_ptr[0] = 1;
-
-        // 버퍼 앞으로 밀기
-        for (int i = buffer_global_index[static_cast<uint32_t>(topic_type)][BUFFER_NUM+2] + 1; i <= buffer_last_idx; i++){
-            int iii = i-(buffer_global_index[static_cast<uint32_t>(topic_type)][BUFFER_NUM+2]+1);
-            for (int j = 0; j < 4 + 4 * WIDTH * HEIGHT; j++){
-                buffer_ptr[iii][j] = buffer_ptr[i][j];
-            }
-            // std::lock_guard<std::mutex> lock(global_index_mutex);
-            buffer_global_index[static_cast<uint32_t>(topic_type)][iii] = buffer_global_index[static_cast<uint32_t>(topic_type)][i];
-        }
-        buffer_global_index[static_cast<uint32_t>(TopicType::DEPTH)][BUFFER_NUM] = 0;
-        buffer_last_idx = buffer_last_idx - buffer_global_index[static_cast<uint32_t>(topic_type)][BUFFER_NUM+2];
-    }
-
-    else if (topic_type == TopicType::POSE) {
-        // std::cout << "pose write" << buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][BUFFER_NUM+1] << std::endl;
-        std::cout << "write index: " << buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][BUFFER_NUM+1] << std::endl;
         for (int i = 0; i < 3; i++){
             for (int j = 0; j < BUFFER_NUM+3 ; j++){
-                std::cout << buffer_global_index[i][j] << " ";
+                std::cout << " " << buffer_global_index[i][j];
             }
             std::cout << "|";
         }
         std::cout << std::endl;
-        // Global index
-        for (int i = 0; i< 4; i++){
-            shm_ptr[1+i] = buffer_ptr[buffer_global_index[static_cast<uint32_t>(topic_type)][BUFFER_NUM+2]][i];
-        }
-        // Data
-        for (int i = 0; i < (3+4)*4; i++){
-            shm_ptr[1+4+i] = buffer_ptr[buffer_global_index[static_cast<uint32_t>(topic_type)][BUFFER_NUM+2]][4+i];
-        }
-        shm_ptr[0] = 1;
-
-        // 버퍼 앞으로 밀기
-        for (int i = buffer_global_index[static_cast<uint32_t>(topic_type)][BUFFER_NUM+2] + 1; i <= buffer_last_idx; i++){
-            int iii = i-(buffer_global_index[static_cast<uint32_t>(topic_type)][BUFFER_NUM+2]+1);
-            for (int j = 0; j < 4 + (3+4)*4; j++){
-                buffer_ptr[iii][j] = buffer_ptr[i][j];
+    }
+    else if (topic_type == TopicType::DEPTH){
+        for (int i = buffer_last_idx ; i >= 0; i--) {
+            for (int j = BUFFER_NUM; j >= 0; j--) {
+                for (int k = BUFFER_NUM; k >= 0; k--) {
+                    if (buffer_global_index[static_cast<uint32_t>(TopicType::DEPTH)][i] == buffer_global_index[static_cast<uint32_t>(TopicType::RGB)][j]
+                    && buffer_global_index[static_cast<uint32_t>(TopicType::DEPTH)][i] == buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][k]
+                    && buffer_global_index[static_cast<uint32_t>(TopicType::DEPTH)][i] != 0){
+                        buffer_write_idx = i;
+                        buffer_global_index[static_cast<uint32_t>(TopicType::RGB)][BUFFER_NUM] = j;
+                        buffer_global_index[static_cast<uint32_t>(TopicType::DEPTH)][BUFFER_NUM] = i;
+                        buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][BUFFER_NUM] = k;
+                        buffer_global_index[static_cast<uint32_t>(TopicType::RGB)][BUFFER_NUM+1] = buffer_global_index[static_cast<uint32_t>(TopicType::RGB)][j];
+                        buffer_global_index[static_cast<uint32_t>(TopicType::DEPTH)][BUFFER_NUM+1] = buffer_global_index[static_cast<uint32_t>(TopicType::DEPTH)][i];
+                        buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][BUFFER_NUM+1] = buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][k];
+                    }
+                }
             }
-            // std::lock_guard<std::mutex> lock(global_index_mutex);
-            buffer_global_index[static_cast<uint32_t>(topic_type)][iii] = buffer_global_index[static_cast<uint32_t>(topic_type)][i];
         }
-        buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][BUFFER_NUM] = 0;
-        buffer_last_idx = buffer_last_idx - buffer_global_index[static_cast<uint32_t>(topic_type)][BUFFER_NUM+2];
-    }    
+    }
+    else if (topic_type == TopicType::POSE){
+        for (int i = buffer_last_idx ; i >= 0; i--) {
+            for (int j = BUFFER_NUM; j >= 0; j--) {
+                for (int k = BUFFER_NUM; k >= 0; k--) {
+                    if (buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][i] == buffer_global_index[static_cast<uint32_t>(TopicType::RGB)][j]
+                    && buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][i] == buffer_global_index[static_cast<uint32_t>(TopicType::DEPTH)][k]
+                    && buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][i] != 0){
+                        buffer_write_idx = i;
+                        buffer_global_index[static_cast<uint32_t>(TopicType::RGB)][BUFFER_NUM] = j;
+                        buffer_global_index[static_cast<uint32_t>(TopicType::DEPTH)][BUFFER_NUM] = k;
+                        buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][BUFFER_NUM] = i;
+                        buffer_global_index[static_cast<uint32_t>(TopicType::RGB)][BUFFER_NUM+1] = buffer_global_index[static_cast<uint32_t>(TopicType::RGB)][j];
+                        buffer_global_index[static_cast<uint32_t>(TopicType::DEPTH)][BUFFER_NUM+1] = buffer_global_index[static_cast<uint32_t>(TopicType::DEPTH)][k];
+                        buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][BUFFER_NUM+1] = buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][i];
+                    }
+                }
+            }
+        }
+    }
+    return buffer_write_idx;
 }
 
 
@@ -407,6 +364,71 @@ void Parser::bufferManager() {
     if (buffer_last_idx > BUFFER_NUM-1){
         buffer_last_idx = 0;
     }
+}
+
+
+void Parser::shmWrite(){
+    shm_ptr[0] = 0;
+    // Global index
+    for (int i = 0; i< 4; i++){
+        shm_ptr[1+i] = buffer_ptr[buffer_write_idx][i];
+    }
+    // Data
+    if (topic_type == TopicType::RGB) {
+        std::lock_guard<std::mutex> lock(global_index_mutex);
+        std::cout << "iii" << std::endl;
+        // std::cout << "image" << buffer_global_index[static_cast<uint32_t>(TopicType::RGB)][BUFFER_NUM+1] << std::endl;
+        for (int i = 0; i < 3 * WIDTH * HEIGHT; i++){
+            shm_ptr[1+4+i] = buffer_ptr[buffer_write_idx][i];
+        }
+        // 버퍼 앞으로 밀기
+        for (int i = buffer_write_idx + 1; i <= buffer_last_idx; i++){
+            for (int j = 0; j < 4 + 3 * WIDTH * HEIGHT; j++){
+                buffer_ptr[i-(buffer_write_idx+1)][j] = buffer_ptr[i][j];
+            }
+            // std::lock_guard<std::mutex> lock(global_index_mutex);
+            buffer_global_index[i-(buffer_write_idx+1)] = buffer_global_index[i];
+        }
+        buffer_global_index[static_cast<uint32_t>(TopicType::RGB)][BUFFER_NUM+2] = buffer_global_index[static_cast<uint32_t>(TopicType::RGB)][BUFFER_NUM+1];
+    }
+    else if (topic_type == TopicType::DEPTH) {
+        std::lock_guard<std::mutex> lock(global_index_mutex);
+        std::cout << "ddd" << std::endl;
+        // std::cout << "depth" << buffer_global_index[static_cast<uint32_t>(TopicType::DEPTH)][BUFFER_NUM+1] << std::endl;
+        for (int i = 0; i < 4 * WIDTH * HEIGHT; i++){
+            shm_ptr[1+4+i] = buffer_ptr[buffer_write_idx][i];
+        }
+        // 버퍼 앞으로 밀기
+        for (int i = buffer_write_idx + 1; i <= buffer_last_idx; i++){
+            for (int j = 0; j < 4 + 4 * WIDTH * HEIGHT; j++){
+                buffer_ptr[i-(buffer_write_idx+1)][j] = buffer_ptr[i][j];
+            }
+            // std::lock_guard<std::mutex> lock(global_index_mutex);
+            buffer_global_index[i-(buffer_write_idx+1)] = buffer_global_index[i];
+        }
+        buffer_global_index[static_cast<uint32_t>(TopicType::DEPTH)][BUFFER_NUM+2] = buffer_global_index[static_cast<uint32_t>(TopicType::DEPTH)][BUFFER_NUM+1];
+    }
+    else if (topic_type == TopicType::POSE) {
+        std::lock_guard<std::mutex> lock(global_index_mutex);
+        std::cout << "ppp" << std::endl;
+        // std::cout << "pose" << buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][BUFFER_NUM+1] << std::endl;
+        for (int i = 0; i < (3+4)*4; i++){
+            shm_ptr[1+4+i] = buffer_ptr[buffer_write_idx][i];
+        }
+        // 버퍼 앞으로 밀기
+        for (int i = buffer_write_idx + 1; i <= buffer_last_idx; i++){
+            for (int j = 0; j < 4 + (3+4)*4; j++){
+                buffer_ptr[i-(buffer_write_idx+1)][j] = buffer_ptr[i][j];
+            }
+            // std::lock_guard<std::mutex> lock(global_index_mutex);
+            buffer_global_index[i-(buffer_write_idx+1)] = buffer_global_index[i];
+        }
+        buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][BUFFER_NUM+2] = buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][BUFFER_NUM+1];
+    }    
+
+    shm_ptr[0] = 1;
+    buffer_last_idx = buffer_last_idx - buffer_write_idx;
+    // std::cout << buffer_last_idx << std::endl;
 }
 
 

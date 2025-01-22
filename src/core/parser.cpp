@@ -291,6 +291,7 @@ void Parser::indexChecker() {
                         buffer_global_index[static_cast<uint32_t>(TopicType::RGB)][BUFFER_NUM+1] = buffer_global_index[static_cast<uint32_t>(TopicType::RGB)][j];
                         buffer_global_index[static_cast<uint32_t>(TopicType::DEPTH)][BUFFER_NUM+1] = buffer_global_index[static_cast<uint32_t>(TopicType::DEPTH)][k];
                         buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][BUFFER_NUM+1] = buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][i];
+                        write_index = buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][i];
                         buffer_global_index[static_cast<uint32_t>(TopicType::RGB)][BUFFER_NUM+2] = j;
                         buffer_global_index[static_cast<uint32_t>(TopicType::DEPTH)][BUFFER_NUM+2] = k;
                         buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][BUFFER_NUM+2] = i;
@@ -331,12 +332,12 @@ void Parser::shmWrite(){
 
         // 버퍼 앞으로 밀기
         for (int i = buffer_global_index[static_cast<uint32_t>(topic_type)][BUFFER_NUM+2] + 1; i <= buffer_last_idx; i++){
-            int iii = i-(buffer_global_index[static_cast<uint32_t>(topic_type)][BUFFER_NUM+2]+1);
+            int k = i-(buffer_global_index[static_cast<uint32_t>(topic_type)][BUFFER_NUM+2]+1);
             for (int j = 0; j < 4 + 3 * WIDTH * HEIGHT; j++){
-                buffer_ptr[iii][j] = buffer_ptr[i][j];
+                buffer_ptr[k][j] = buffer_ptr[i][j];
             }
             // std::lock_guard<std::mutex> lock(global_index_mutex);
-            buffer_global_index[static_cast<uint32_t>(topic_type)][iii] = buffer_global_index[static_cast<uint32_t>(topic_type)][i];
+            buffer_global_index[static_cast<uint32_t>(topic_type)][k] = buffer_global_index[static_cast<uint32_t>(topic_type)][i];
         }
         buffer_global_index[static_cast<uint32_t>(topic_type)][BUFFER_NUM] = 0;
         buffer_last_idx = buffer_last_idx - buffer_global_index[static_cast<uint32_t>(topic_type)][BUFFER_NUM+2];
@@ -357,12 +358,12 @@ void Parser::shmWrite(){
 
         // 버퍼 앞으로 밀기
         for (int i = buffer_global_index[static_cast<uint32_t>(topic_type)][BUFFER_NUM+2] + 1; i <= buffer_last_idx; i++){
-            int iii = i-(buffer_global_index[static_cast<uint32_t>(topic_type)][BUFFER_NUM+2]+1);
+            int k = i-(buffer_global_index[static_cast<uint32_t>(topic_type)][BUFFER_NUM+2]+1);
             for (int j = 0; j < 4 + 4 * WIDTH * HEIGHT; j++){
-                buffer_ptr[iii][j] = buffer_ptr[i][j];
+                buffer_ptr[k][j] = buffer_ptr[i][j];
             }
             // std::lock_guard<std::mutex> lock(global_index_mutex);
-            buffer_global_index[static_cast<uint32_t>(topic_type)][iii] = buffer_global_index[static_cast<uint32_t>(topic_type)][i];
+            buffer_global_index[static_cast<uint32_t>(topic_type)][k] = buffer_global_index[static_cast<uint32_t>(topic_type)][i];
         }
         buffer_global_index[static_cast<uint32_t>(TopicType::DEPTH)][BUFFER_NUM] = 0;
         buffer_last_idx = buffer_last_idx - buffer_global_index[static_cast<uint32_t>(topic_type)][BUFFER_NUM+2];
@@ -370,7 +371,7 @@ void Parser::shmWrite(){
 
     else if (topic_type == TopicType::POSE) {
         // std::cout << "pose write" << buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][BUFFER_NUM+1] << std::endl;
-        std::cout << "write index: " << buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][BUFFER_NUM+1] << std::endl;
+        std::cout << "write index: " << write_index << std::endl;
         for (int i = 0; i < 3; i++){
             for (int j = 0; j < BUFFER_NUM+3 ; j++){
                 std::cout << buffer_global_index[i][j] << " ";
@@ -390,12 +391,12 @@ void Parser::shmWrite(){
 
         // 버퍼 앞으로 밀기
         for (int i = buffer_global_index[static_cast<uint32_t>(topic_type)][BUFFER_NUM+2] + 1; i <= buffer_last_idx; i++){
-            int iii = i-(buffer_global_index[static_cast<uint32_t>(topic_type)][BUFFER_NUM+2]+1);
+            int k = i-(buffer_global_index[static_cast<uint32_t>(topic_type)][BUFFER_NUM+2]+1);
             for (int j = 0; j < 4 + (3+4)*4; j++){
-                buffer_ptr[iii][j] = buffer_ptr[i][j];
+                buffer_ptr[k][j] = buffer_ptr[i][j];
             }
             // std::lock_guard<std::mutex> lock(global_index_mutex);
-            buffer_global_index[static_cast<uint32_t>(topic_type)][iii] = buffer_global_index[static_cast<uint32_t>(topic_type)][i];
+            buffer_global_index[static_cast<uint32_t>(topic_type)][k] = buffer_global_index[static_cast<uint32_t>(topic_type)][i];
         }
         buffer_global_index[static_cast<uint32_t>(TopicType::POSE)][BUFFER_NUM] = 0;
         buffer_last_idx = buffer_last_idx - buffer_global_index[static_cast<uint32_t>(topic_type)][BUFFER_NUM+2];

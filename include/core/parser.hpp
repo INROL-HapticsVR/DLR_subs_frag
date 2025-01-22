@@ -91,6 +91,7 @@ public:
 
     uint32_t global_index;
     uint32_t fragment_index;
+    int write_index;
 
     topic_rgb_t rgb;
     topic_d_t depth;
